@@ -127,7 +127,13 @@ def _docker(cmd: str) -> tuple[int, str, str]:
 async def swe_clone(*, repo_url: str, ref: Optional[str] = None) -> str:
     cmds = [f"rm -rf project && git clone --depth 1 {shlex.quote(repo_url)} project"]
     if ref:
-        cmds.append(f"cd project && git fetch --depth 1 origin {shlex.quote(ref)} && git checkout -q {shlex.quote(ref)}")
+        r = shlex.quote(ref)
+        cmds.append(
+            "cd project && "
+            f"(git fetch --depth 1 origin {r} && git checkout -q {r}) "
+            f"|| (git fetch --depth 50 origin {r} && git checkout -q {r}) "
+            f"|| ((git fetch --unshallow origin || git fetch --unshallow || true) && git checkout -q {r})"
+        )
     code, out, err = _docker(" && ".join(cmds))
     return "(cloned)" if code == 0 else f"(exit {code})\nSTDOUT:\n{out}\nSTDERR:\n{err}"
 

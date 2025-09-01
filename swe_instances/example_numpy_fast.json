@@ -1,0 +1,7 @@
+{
+  "id": "numpy_fast_subset",
+  "repo_url": "https://github.com/numpy/numpy",
+  "ref": "",
+  "pytest_k": "linalg and not slow",
+  "notes": "Likely to fail in this minimal image due to compiled deps; included for completeness."
+}

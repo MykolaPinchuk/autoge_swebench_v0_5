@@ -1,0 +1,7 @@
+{
+  "id": "pandas_fast_subset",
+  "repo_url": "https://github.com/pandas-dev/pandas",
+  "ref": "",
+  "pytest_k": "io or dtype or parser and not slow and not network",
+  "notes": "Narrow subset to keep runtime low; may still fail without editable install."
+}

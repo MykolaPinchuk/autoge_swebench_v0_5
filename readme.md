@@ -94,12 +94,30 @@ Option D — Tiny local coding loop (writes to `sandbox/` and runs pytest locall
 python -u local_task.py
 ```
 
+Option E — Eval runner (one/team + model sweep) and summary:
+
+```bash
+# Run one-agent or team against a specific instance file
+python -u eval_run.py one swe_instances/example_pytest.json
+python -u eval_run.py team swe_instances/example_pytest.json
+
+# Sweep multiple models (comma-separated)
+export CHUTES_MODELS="moonshotai/Kimi-K2-Instruct-75k,openrouter/auto"
+python -u eval_run.py one swe_instances/example_pytest.json
+
+# Summarize results from sandbox/results.jsonl (supports filters)
+python -u eval_summary.py
+FILTER_INSTANCE=pytest_example_collection python -u eval_summary.py
+FILTER_TEAM=one-agent python -u eval_summary.py
+```
+
 ### Notes
 
 - The container runs in `/workspace` with your local `sandbox/` bind‑mounted. Cloned repos live in `sandbox/project/`.
 - If a target repo has no `requirements.txt`, the runner still executes pytest; some projects bootstrap via `pip install -e .` (see `repo_validate.py`).
 - To change the Docker image, set `SWE_IMAGE` (default: `swebench-lite:py3.10`).
 - For broader test runs, clear `PYTEST_K` to run all tests (can be slow on large repos).
+ - For pandas/numpy tasks, the thin Docker image may lack compiled dependencies (numpy/pandas). Improve the install step (editable install + extras) or switch to a fuller base image if imports fail.
 
 ### Troubleshooting
 

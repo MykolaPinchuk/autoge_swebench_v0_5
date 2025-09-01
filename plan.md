@@ -7,6 +7,24 @@ This plan moves from a generic repo validator to solving one SWE-bench task end-
 - Capture correctness, elapsed time, message/step count, and token usage.
 - Keep changes minimal and validate after each step.
 
+## Current status (checkpoint)
+- Phase 1 (Instance loader): Done — `swe_instance.py`, example instances, env override in runners.
+- Phase 2 (Metrics capture): Done — JSONL appended to `sandbox/results.jsonl`.
+- Phase 3 (Token usage): Done — captured when provider returns usage; otherwise totals remain 0.
+- Phase 4 (One pandas/numpy instance): Partially — instances added; blocked by compiled deps in thin image.
+- Phase 5 (Multi-agent parity): Done — team runner logs comparable metrics.
+- Phase 6 (Model/team sweeps): Done (basic) — `eval_run.py` supports CHUTES_MODELS sweep; `eval_summary.py` prints compact tables.
+
+Short-term next steps
+1) Enhance `swe_install` in both runners:
+  - Attempt `pip install -e .` in `sandbox/project`.
+  - If extras exist, attempt `pip install -e .[test]` (or `[dev]`).
+  - Fallback: `-r requirements.txt`; ensure pytest installed in the container.
+2) Re-run pandas fast instance and confirm tests progress beyond import errors.
+3) If needed, switch to or add an alternative Docker image with scientific wheels preinstalled.
+4) Extend `eval_summary.py` with aggregates and optional CSV output.
+5) Add brief docs for `eval_run.py` usage (model sweeps, filters) — see README.
+
 ## Phase 1 — Instance loader (smallest change)
 - Add a tiny SWE-bench instance format and loader.
 - Wire it into the existing one-agent runner without changing core logic.

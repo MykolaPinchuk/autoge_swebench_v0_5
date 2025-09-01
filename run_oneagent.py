@@ -1,10 +1,12 @@
-# team_swebench_oneagent_v2.py
-# One-agent MVP for repo validation in Docker with robust termination and clean quoting.
-# pip install -U autogen-agentchat autogen-ext[openai]
-# docker build -f Dockerfile.swe -t swebench-lite:py3.10 .
+# run_oneagent.py
+# One-agent MVP for repo validation in Docker with robust termination and quick debugging.
 
-import os, shlex, time, asyncio, subprocess
-from typing import List, Optional
+import os
+import shlex
+import time
+import asyncio
+import subprocess
+from typing import List, Optional, Tuple
 
 from autogen_agentchat.agents import AssistantAgent
 from autogen_agentchat.teams import RoundRobinGroupChat
@@ -16,9 +18,10 @@ from autogen_ext.models.openai import OpenAIChatCompletionClient
 from chutes_config import load_chutes_key, get_chutes_base_url
 
 # ---------------- config ----------------
-CHUTES_API_KEY  = load_chutes_key()
+CHUTES_API_KEY = load_chutes_key()
 CHUTES_BASE_URL = get_chutes_base_url()
 
+# Default candidates; can be overridden via CHUTES_MODEL(S)
 MODEL_CANDIDATES: List[str] = [
     "moonshotai/Kimi-K2-Instruct-75k",
     "openai/gpt-oss-120b",
@@ -30,19 +33,23 @@ MODEL_CANDIDATES: List[str] = [
     "unsloth/gemma-3-12b-it",
     "chutesai/Devstral-Small-2505",
     "zai-org/GLM-4.5-Air",
-    "Qwen/Qwen3-14B"
+    "Qwen/Qwen3-14B",
 ]
 BASE_MODEL_INFO = {
-    "vision": False, "function_calling": True,
-    "json_output": False, "structured_output": False, "family": "unknown",
+    "vision": False,
+    "function_calling": True,
+    "json_output": False,
+    "structured_output": False,
+    "family": "unknown",
 }
 
 DOCKER_IMAGE = os.environ.get("SWE_IMAGE", "swebench-lite:py3.10")
-MAX_TURNS    = 4   # small cap—should finish in ~3 messages
+MAX_TURNS = 4  # small cap—should finish in ~3 messages
 
 TARGET_REPO = os.environ.get("TARGET_REPO", "https://github.com/pytest-dev/pytest")
-TARGET_REF  = os.environ.get("TARGET_REF", "")
-PYTEST_K    = os.environ.get("PYTEST_K", "collection")  # example; set "" to run all tests
+TARGET_REF = os.environ.get("TARGET_REF", "")
+PYTEST_K = os.environ.get("PYTEST_K", "collection")  # example; set "" to run all tests
+
 
 # ------------- model + preflight -------------
 def make_client(model_name: str) -> OpenAIChatCompletionClient:
@@ -55,19 +62,33 @@ def make_client(model_name: str) -> OpenAIChatCompletionClient:
         model_info=BASE_MODEL_INFO,
     )
 
+
 async def preflight(client: OpenAIChatCompletionClient) -> bool:
     try:
         stream = client.create_stream(
             messages=[UserMessage(content="hi", source="user")],
             extra_create_args={"max_tokens": 4, "stream_options": {"include_usage": True}},
         )
-        async for _ in stream: pass
+        async for _ in stream:
+            pass
         return True
     except Exception:
         return False
 
+
+def _get_candidate_models() -> List[str]:
+    # Allow override via env: CHUTES_MODEL or CHUTES_MODELS (comma-separated)
+    single = os.environ.get("CHUTES_MODEL")
+    if single and single.strip():
+        return [single.strip()]
+    multi = os.environ.get("CHUTES_MODELS")
+    if multi and multi.strip():
+        return [m.strip() for m in multi.split(",") if m.strip()]
+    return MODEL_CANDIDATES
+
+
 async def pick_ready_model() -> OpenAIChatCompletionClient:
-    for m in MODEL_CANDIDATES:
+    for m in _get_candidate_models():
         c = make_client(m)
         if await preflight(c):
             print(f"[preflight] Using model: {m}")
@@ -75,13 +96,15 @@ async def pick_ready_model() -> OpenAIChatCompletionClient:
         print(f"[preflight] Model not ready: {m} -> next")
     raise RuntimeError("No model available for now.")
 
+
 # ---------------- docker helpers ----------------
-def _docker(cmd: str) -> tuple[int, str, str]:
+def _docker(cmd: str) -> Tuple[int, str, str]:
     workdir = os.path.abspath("sandbox")
     os.makedirs(workdir, exist_ok=True)
     full = f"docker run --rm -v {workdir}:/workspace -w /workspace {DOCKER_IMAGE} bash -lc {shlex.quote(cmd)}"
     p = subprocess.run(full, shell=True, text=True, capture_output=True)
     return p.returncode, p.stdout, p.stderr
+
 
 # ---- tools (async functions with type hints) ----
 async def swe_clone(*, repo_url: str, ref: Optional[str] = None) -> str:
@@ -93,6 +116,7 @@ async def swe_clone(*, repo_url: str, ref: Optional[str] = None) -> str:
     code, out, err = _docker(" && ".join(cmds))
     return "(cloned)" if code == 0 else f"(exit {code})\nSTDOUT:\n{out}\nSTDERR:\n{err}"
 
+
 async def swe_install(*, req_file: str = "requirements.txt") -> str:
     cmd = (
         f"cd project && "
@@ -102,13 +126,28 @@ async def swe_install(*, req_file: str = "requirements.txt") -> str:
     code, out, err = _docker(cmd)
     return (out or "ok").strip() if code == 0 else f"(exit {code})\nSTDOUT:\n{out}\nSTDERR:\n{err}"
 
+
 async def swe_pytest(*, pytest_args: str = "-q") -> str:
-    cmd = f"cd project && python -m pytest {pytest_args}"
+    cmd = f"""
+cd project
+python - <<'PY'
+import sys, subprocess
+try:
+    import pytest  # noqa: F401
+except Exception:
+    subprocess.run('python -m pip install -q -U pytest', shell=True, check=False)
+PY
+python -m pytest {pytest_args}
+"""
     code, out, err = _docker(cmd)
-    # Always return ONLY the last non-empty line of stdout
-    last = [ln for ln in (out or "").splitlines() if ln.strip()]
-    tail = last[-1] if last else ""
-    return tail or "(no stdout)"
+    # Return ONLY the last non-empty line of stdout; fallback to stderr; else simple message
+    def last_nonempty(s: str) -> str:
+        lines = [ln for ln in (s or "").splitlines() if ln.strip()]
+        return lines[-1] if lines else ""
+
+    tail = last_nonempty(out) or last_nonempty(err) or "no tests ran"
+    return tail
+
 
 # ---------------- main ----------------
 async def main():
@@ -120,11 +159,11 @@ async def main():
     # Robust termination: catch typical pytest tails (pass/fail/error/summary variants)
     term = (
         TextMentionTermination(" passed in ")
-        | TextMentionTermination(" passed")         # e.g., "1 passed, 1 warning"
-        | TextMentionTermination(" failed")         # e.g., "1 failed, 1 passed"
-        | TextMentionTermination(" error")          # e.g., "1 error in 0.02s"
-        | TextMentionTermination(" deselected")     # e.g., "1 passed, 1 deselected"
-        | TextMentionTermination(" skipped")        # sometimes appears
+        | TextMentionTermination(" passed")
+        | TextMentionTermination(" failed")
+        | TextMentionTermination(" error")
+        | TextMentionTermination(" deselected")
+        | TextMentionTermination(" skipped")
         | TextMentionTermination(" short test summary ")
         | TextMentionTermination(" no tests ran")
         | MaxMessageTermination(MAX_TURNS)
@@ -153,6 +192,7 @@ After step 3, print ONLY the exact string returned by swe_pytest (the last non-e
         print(f"Messages: {len(res.messages)}")
     except Exception:
         pass
+
 
 if __name__ == "__main__":
     asyncio.run(main())

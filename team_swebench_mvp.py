@@ -11,10 +11,11 @@ from autogen_agentchat.conditions import TextMentionTermination, MaxMessageTermi
 from autogen_agentchat.ui import Console
 from autogen_core.models import UserMessage
 from autogen_ext.models.openai import OpenAIChatCompletionClient
+from chutes_config import load_chutes_key, get_chutes_base_url
 
 # ---------------- config ----------------
-CHUTES_API_KEY  = os.environ.get("CHUTES_API_KEY",  "cpk_6409376b53ff4bcda0bed0b6e71b2abe.105ceb10f63a5052bf24ac406ffcf330.9IVsa2JTvSIgVL1nUCSOCfOpBlKvcust")
-CHUTES_BASE_URL = os.environ.get("CHUTES_BASE_URL", "https://llm.chutes.ai/v1")
+CHUTES_API_KEY  = load_chutes_key()
+CHUTES_BASE_URL = get_chutes_base_url()
 MODEL_CANDIDATES: List[str] = [
     "moonshotai/Kimi-K2-Instruct-75k",
     "openai/gpt-oss-120b",

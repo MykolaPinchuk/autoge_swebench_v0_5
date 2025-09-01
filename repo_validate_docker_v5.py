@@ -45,6 +45,13 @@ cd project
 python -m pip install -q hatchling hatch-vcs
 # Editable install of the project:
 python -m pip install -q -e .
+# Try to install development/test extras if defined (best-effort):
+python - <<'PY'
+import sys, subprocess
+def run(cmd):
+    subprocess.run(cmd, shell=True, check=False)
+run("python -m pip install -q -e .[dev]")
+PY
 # Project-specific test deps (if present):
 if [ -f testing/requirements.txt ]; then python -m pip install -q -r testing/requirements.txt; fi
 # Ensure pytest itself is available/up-to-date:
@@ -56,6 +63,27 @@ python -m pytest -q {kflag}
     last = tail(out) or tail(err) or "(no output)"
     print(last)
     if code != 0:
+        # On failure, persist logs for debugging and print a short diagnostic.
+        os.makedirs(WORKDIR, exist_ok=True)
+        log_out = os.path.join(WORKDIR, "last_run_stdout.log")
+        log_err = os.path.join(WORKDIR, "last_run_stderr.log")
+        try:
+            with open(log_out, "w", encoding="utf-8", errors="ignore") as f:
+                f.write(out or "")
+            with open(log_err, "w", encoding="utf-8", errors="ignore") as f:
+                f.write(err or "")
+        except Exception:
+            pass
+
+        # Optionally print tail of logs for quick insight
+        def tail_lines(s: str, n: int = 80) -> str:
+            lines = (s or "").splitlines()
+            return "\n".join(lines[-n:])
+
+        print("\n--- pytest stdout (tail) ---\n" + tail_lines(out, 80))
+        if err and err.strip():
+            print("\n--- pytest stderr (tail) ---\n" + tail_lines(err, 80))
+        print(f"\nFull logs saved to: {log_out}, {log_err}")
         raise SystemExit(1)
 
 if __name__ == "__main__":

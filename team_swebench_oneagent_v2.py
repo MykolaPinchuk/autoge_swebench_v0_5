@@ -13,16 +13,24 @@ from autogen_agentchat.ui import Console
 
 from autogen_core.models import UserMessage
 from autogen_ext.models.openai import OpenAIChatCompletionClient
+from chutes_config import load_chutes_key, get_chutes_base_url
 
 # ---------------- config ----------------
-CHUTES_API_KEY  = os.environ.get("CHUTES_API_KEY",  "cpk_qqq")
-CHUTES_BASE_URL = os.environ.get("CHUTES_BASE_URL", "https://llm.chutes.ai/v1")
+CHUTES_API_KEY  = load_chutes_key()
+CHUTES_BASE_URL = get_chutes_base_url()
 
 MODEL_CANDIDATES: List[str] = [
     "moonshotai/Kimi-K2-Instruct-75k",
     "openai/gpt-oss-120b",
     "deepseek-ai/DeepSeek-V3-0324",
     "openai/gpt-oss-20b",
+    "deepseek-ai/DeepSeek-R1-0528",
+    "Qwen/Qwen2.5-VL-32B-Instruct",
+    "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B",
+    "unsloth/gemma-3-12b-it",
+    "chutesai/Devstral-Small-2505",
+    "zai-org/GLM-4.5-Air",
+    "Qwen/Qwen3-14B"
 ]
 BASE_MODEL_INFO = {
     "vision": False, "function_calling": True,

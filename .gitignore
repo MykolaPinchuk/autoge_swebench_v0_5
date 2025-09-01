@@ -1,0 +1,84 @@
+# ---- Python bytecode / cache ----
+__pycache__/
+*.py[cod]
+*$py.class
+
+# ---- C extensions ----
+*.so
+
+# ---- Distribution / packaging ----
+.Python
+build/
+dist/
+.eggs/
+*.egg-info/
+*.egg
+wheels/
+share/python-wheels/
+pip-wheel-metadata/
+
+# ---- Installer logs ----
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ---- Unit test / coverage / tooling ----
+.tox/
+.nox/
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.hypothesis/
+.mypy_cache/
+.pytype/
+.pyre/
+.ruff_cache/
+.cache/
+
+# ---- Environments ----
+.env
+.env.*
+.venv
+.venv*/
+venv/
+env/
+ENV/
+.python-version
+
+# ---- Jupyter ----
+.ipynb_checkpoints/
+
+# ---- IDE / Editor ----
+.vscode/
+.idea/
+*.code-workspace
+
+# ---- OS files ----
+.DS_Store
+Thumbs.db
+
+# ---- Logs / sqlite ----
+*.log
+db.sqlite3
+*.sqlite3
+
+# ---- Sphinx / docs build ----
+docs/_build/
+doc/_build/
+doc/build/
+
+# ---- Project-specific ----
+# External repos and large artifacts cloned/created under sandbox
+sandbox/project/
+# Nested sandbox workspace from agent runs
+sandbox/sandbox/
+# Common Python detritus under sandbox
+sandbox/**/__pycache__/
+sandbox/**/*.pyc
+
+# Optional local swe-bench caches
+.swebench/
+
+# ---- Docker miscellany (local exports) ----
+*.tar

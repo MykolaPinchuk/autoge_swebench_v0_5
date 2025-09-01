@@ -1,0 +1,5 @@
+FROM python:3.10
+RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
+WORKDIR /workspace
+# You can preinstall common libs:
+# RUN pip install -U pytest pytest-xdist

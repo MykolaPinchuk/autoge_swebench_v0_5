@@ -2,6 +2,9 @@
 # One-agent MVP for repo validation in Docker with robust termination and quick debugging.
 
 import os
+import re
+import json
+from datetime import datetime, timezone
 import shlex
 import time
 import asyncio
@@ -16,6 +19,8 @@ from autogen_agentchat.ui import Console
 from autogen_core.models import UserMessage
 from autogen_ext.models.openai import OpenAIChatCompletionClient
 from chutes_config import load_chutes_key, get_chutes_base_url
+from swe_instance import load_instance, SWEInstance
+from swe_instance import load_instance, SWEInstance
 
 # ---------------- config ----------------
 CHUTES_API_KEY = load_chutes_key()
@@ -49,6 +54,21 @@ MAX_TURNS = 4  # small cap—should finish in ~3 messages
 TARGET_REPO = os.environ.get("TARGET_REPO", "https://github.com/pytest-dev/pytest")
 TARGET_REF = os.environ.get("TARGET_REF", "")
 PYTEST_K = os.environ.get("PYTEST_K", "collection")  # example; set "" to run all tests
+
+# Optional SWE-bench instance override
+INSTANCE_FILE = os.environ.get("SWE_INSTANCE_FILE", "").strip()
+INSTANCE: Optional[SWEInstance] = None
+if INSTANCE_FILE:
+    try:
+        INSTANCE = load_instance(INSTANCE_FILE)
+        TARGET_REPO = INSTANCE.repo_url
+        TARGET_REF = INSTANCE.ref
+        PYTEST_K = INSTANCE.pytest_k
+        print(
+            f"[instance] Loaded: {INSTANCE.id} -> repo={TARGET_REPO} ref={TARGET_REF or '(default)'} -k=\"{PYTEST_K}\""
+        )
+    except Exception as e:
+        raise SystemExit(f"Failed to load SWE instance from {INSTANCE_FILE}: {e}")
 
 
 # ------------- model + preflight -------------
@@ -87,12 +107,63 @@ def _get_candidate_models() -> List[str]:
     return MODEL_CANDIDATES
 
 
+def _instrument_client(client: OpenAIChatCompletionClient, model_name: str) -> OpenAIChatCompletionClient:
+    """Wrap create_stream to always request usage and accumulate totals on the client."""
+    totals = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
+    orig_create_stream = client.create_stream
+
+    def _merge_usage(u) -> None:
+        try:
+            # u may be a dict-like or object with attrs
+            get = (lambda k: (u.get(k) if isinstance(u, dict) else getattr(u, k, None)))
+            pt = get("prompt_tokens") or get("input_tokens") or 0
+            ct = get("completion_tokens") or get("output_tokens") or 0
+            tt = get("total_tokens") or 0
+            if isinstance(pt, int):
+                totals["prompt_tokens"] += pt
+            if isinstance(ct, int):
+                totals["completion_tokens"] += ct
+            if isinstance(tt, int) and tt:
+                totals["total_tokens"] += tt
+            else:
+                # Recompute if provider didn't give total
+                totals["total_tokens"] = totals["prompt_tokens"] + totals["completion_tokens"]
+        except Exception:
+            pass
+
+    def create_stream_wrapper(*args, **kwargs):
+        extra = kwargs.get("extra_create_args") or {}
+        if not isinstance(extra, dict):
+            extra = {}
+        stream_opts = dict(extra.get("stream_options") or {})
+        stream_opts["include_usage"] = True
+        extra["stream_options"] = stream_opts
+        kwargs["extra_create_args"] = extra
+        stream = orig_create_stream(*args, **kwargs)
+
+        async def gen():
+            async for chunk in stream:
+                u = getattr(chunk, "usage", None)
+                if u:
+                    _merge_usage(u)
+                yield chunk
+
+        return gen()
+
+    # monkey-patch
+    client.create_stream = create_stream_wrapper  # type: ignore
+    client._usage_totals = totals  # type: ignore
+    client._selected_model_name = model_name  # type: ignore
+    return client
+
+
 async def pick_ready_model() -> OpenAIChatCompletionClient:
     for m in _get_candidate_models():
         c = make_client(m)
         if await preflight(c):
             print(f"[preflight] Using model: {m}")
-            return c
+            return _instrument_client(c, m)
         print(f"[preflight] Model not ready: {m} -> next")
     raise RuntimeError("No model available for now.")
 
@@ -145,7 +216,11 @@ python -m pytest {pytest_args}
         lines = [ln for ln in (s or "").splitlines() if ln.strip()]
         return lines[-1] if lines else ""
 
-    tail = last_nonempty(out) or last_nonempty(err) or "no tests ran"
+    tail = last_nonempty(out) or last_nonempty(err) or ""
+    # record last tail for metrics (only if non-empty)
+    global LAST_PYTEST_TAIL
+    if tail:
+        LAST_PYTEST_TAIL = tail
     return tail
 
 
@@ -174,7 +249,8 @@ async def main():
     kflag = f'-k "{PYTEST_K}"' if PYTEST_K else ""
     pytest_args = f"-q {kflag}".strip()
 
-    task = f"""Validate a Python repo in Docker. Execute EXACTLY these three tool calls, then STOP.
+    inst_hint = f"Instance: {INSTANCE.id}\n" if INSTANCE else ""
+    task = f"""{inst_hint}Validate a Python repo in Docker. Execute EXACTLY these three tool calls, then STOP.
 Do NOT print tool call syntax, XML/angle-bracket markup, or explanations. Paste only tool returns when prompted.
 
 1) swe_clone(repo_url="{TARGET_REPO}", ref="{TARGET_REF}")
@@ -186,12 +262,65 @@ After step 3, print ONLY the exact string returned by swe_pytest (the last non-e
 """
 
     t0 = time.time()
+    started = datetime.now(timezone.utc).isoformat()
     res = await Console(team.run_stream(task=task))
-    print(f"\n--- SUMMARY ---\nElapsed seconds: {time.time() - t0:.2f}")
+    elapsed = time.time() - t0
+    ended = datetime.now(timezone.utc).isoformat()
+    print(f"\n--- SUMMARY ---\nElapsed seconds: {elapsed:.2f}")
     try:
         print(f"Messages: {len(res.messages)}")
     except Exception:
         pass
+
+    # ---- metrics recording ----
+    def infer_status(tail: str) -> str:
+        s = (tail or "").lower()
+        if not s:
+            return "unknown"
+        # success if has 'passed' count and not 'failed'/'error'
+        if re.search(r"\b\d+\s+passed\b", s) and not ("failed" in s or "error" in s or "errors" in s):
+            return "pass"
+        if "failed" in s or "error" in s or "errors" in s:
+            return "fail"
+        return "unknown"
+
+    try:
+        msg_count = len(res.messages)
+    except Exception:
+        msg_count = None
+
+    usage = getattr(model, "_usage_totals", None)
+    model_name = getattr(model, "_selected_model_name", None) or getattr(model, "model", None) or getattr(model, "_model", None)
+
+    record = {
+        "instance_id": (INSTANCE.id if 'INSTANCE' in globals() and INSTANCE else None),
+        "repo_url": TARGET_REPO,
+        "ref": TARGET_REF,
+        "pytest_k": PYTEST_K,
+        "model": model_name,
+        "start_ts": started,
+        "end_ts": ended,
+        "elapsed_sec": round(elapsed, 3),
+        "messages": msg_count,
+        "final_pytest_tail": globals().get("LAST_PYTEST_TAIL", None),
+        "status": infer_status(globals().get("LAST_PYTEST_TAIL", "") or ""),
+        "tokens": (
+            {
+                "prompt": usage.get("prompt_tokens", 0),
+                "completion": usage.get("completion_tokens", 0),
+                "total": usage.get("total_tokens", 0),
+            }
+            if isinstance(usage, dict)
+            else None
+        ),
+    }
+
+    try:
+        os.makedirs("sandbox", exist_ok=True)
+        with open(os.path.join("sandbox", "results.jsonl"), "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception as e:
+        print(f"(metrics write failed): {e}")
 
 
 if __name__ == "__main__":

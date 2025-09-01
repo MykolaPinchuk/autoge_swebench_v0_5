@@ -1,0 +1,7 @@
+{
+  "id": "pandas_example_collection",
+  "repo_url": "https://github.com/pandas-dev/pandas",
+  "ref": "",
+  "pytest_k": "io or dtype or parser or groupby and not slow",
+  "notes": "Narrow fast-ish subset; adjust -k to keep runtime low."
+}

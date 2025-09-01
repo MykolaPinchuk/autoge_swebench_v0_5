@@ -1,0 +1,7 @@
+{
+  "id": "pytest_example_collection",
+  "repo_url": "https://github.com/pytest-dev/pytest",
+  "ref": "",
+  "pytest_k": "collection",
+  "notes": "Very fast subset to validate the harness."
+}
